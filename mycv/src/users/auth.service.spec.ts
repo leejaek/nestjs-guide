@@ -1,3 +1,4 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { User } from './user.entity';
@@ -5,13 +6,25 @@ import { UsersService } from './users.service';
 
 describe('AuthService', () => {
   let service: AuthService;
+  let fakeUsersService: Partial<UsersService>;
 
   beforeEach(async () => {
     // Create a fake copy of the users service
-    const fakeUsersService: Partial<UsersService> = {
-      find: () => Promise.resolve([]),
-      create: (email: string, password: string) =>
-        Promise.resolve({ id: 1, email, password } as User),
+    const users: User[] = [];
+    fakeUsersService = {
+      find: (email: string) => {
+        const filteredUsers = users.filter((user) => user.email === email);
+        return Promise.resolve(filteredUsers);
+      },
+      create: (email: string, password: string) => {
+        const user = {
+          id: Math.floor(Math.random() * 99999),
+          email,
+          password,
+        } as User;
+        users.push(user);
+        return Promise.resolve(user);
+      },
     };
     const module = await Test.createTestingModule({
       providers: [
@@ -34,5 +47,35 @@ describe('AuthService', () => {
     const [salt, hash] = (await user).password.split('.');
     expect(salt).toBeDefined();
     expect(hash).toBeDefined();
+  });
+
+  it('throws an error if user sings up with email that is in use', async () => {
+    await service.signup('asdf@asdf.com', 'asdf');
+    await service
+      .signup('asdf@asdf.com', 'asdf')
+      .catch((err: BadRequestException) => {
+        expect(err.message).toEqual('Email in use');
+      });
+  });
+
+  it('throws if signin is called with an unused email', () => {
+    service.signin('asdf@asdf.com', 'asdf').catch((err: NotFoundException) => {
+      expect(err.message).toEqual('User not found');
+    });
+  });
+
+  it('throws if an invalid password is provided', async () => {
+    await service.signup('asdf@asdf.com', 'mypassword');
+    service
+      .signin('asdf@asdf.com', 'password')
+      .catch((err: BadRequestException) => {
+        expect(err.message).toEqual('Bad password');
+      });
+  });
+
+  it('returns a user if correct password is provided', async () => {
+    await service.signup('asdf@asdf.com', 'mypassword');
+    const user = service.signin('asdf@asdf.com', 'mypassword');
+    expect(user).toBeDefined();
   });
 });
